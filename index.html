@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ta">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maruthy Multi Centre — Barcode Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{color-scheme:light}*{box-sizing:border-box}body{font-family:Arial,"Noto Sans Tamil",sans-serif;margin:0;background:#f3f6fb;color:#172033;padding:18px}.card{max-width:620px;margin:0 auto;background:white;border-radius:16px;padding:20px;box-shadow:0 6px 24px #15233a14}h1{font-size:22px;margin:0 0 8px}p{line-height:1.55;color:#475569}#reader{width:100%;margin:18px auto;min-height:220px}.status{padding:12px;border-radius:9px;background:#eff6ff;color:#1e40af;margin:12px 0}.buttons{display:flex;gap:10px;flex-wrap:wrap}button{border:0;border-radius:9px;padding:12px 16px;font-size:15px;cursor:pointer;background:#1d4ed8;color:white}button.secondary{background:#e2e8f0;color:#172033}button:disabled{opacity:.55;cursor:default}#manual{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;margin:8px 0}small{color:#64748b}
+</style></head>
+<body><main class="card">
+<h1>📷 Maruthy Barcode Scanner</h1>
+<p>Billing அல்லது Purchase பக்கத்திலிருந்து திறக்கப்பட்ட தனி HTTPS scanner.</p>
+<div id="status" class="status">கேமரா தொடங்கத் தயாராகிறது…</div>
+<div id="reader"></div>
+<div class="buttons"><button id="startBtn" type="button">கேமராவைத் தொடங்கு</button><button id="stopBtn" class="secondary" type="button">கேமராவை நிறுத்து</button><button id="closeBtn" class="secondary" type="button">மூடு</button></div>
+<p><label for="manual">தேவைப்பட்டால் பார்கோடை கைமுறையாக உள்ளிடவும்</label><input id="manual" autocomplete="off" placeholder="Barcode / Product code"><button id="sendBtn" type="button">Billing / Purchase-க்கு அனுப்பு</button></p>
+<small>கேமரா அனுமதி கேட்கப்பட்டால் Allow தேர்ந்தெடுக்கவும். இது Apps Script பக்கத்திலிருந்து வேறு HTTPS பக்கத்தில் இயங்குகிறது.</small>
+</main>
+<script>
+(function(){
+  'use strict';
+  const params = new URLSearchParams(location.search);
+  const target = params.get('target') === 'purchase' ? 'purchase' : 'billing';
+  const returnOrigin = params.get('returnOrigin') || '';
+  const statusEl = document.getElementById('status');
+  const manual = document.getElementById('manual');
+  let scanner = null, busy = false;
+  function status(message){ statusEl.textContent = message; }
+  function sendBarcode(value){
+    const barcode = String(value || '').trim();
+    if(!barcode) return status('பார்கோடு எண்ணை ஸ்கேன் செய்யவும் அல்லது உள்ளிடவும்.');
+    if(!returnOrigin || !/^https:\/\//i.test(returnOrigin)) return status('மீண்டும் அனுப்பும் முகவரி சரியில்லை. Billing / Purchase பக்கத்திலிருந்து மீண்டும் திறக்கவும்.');
+    if(!window.opener || window.opener.closed) return status('மூல Billing / Purchase சாளரம் கிடைக்கவில்லை. Scanner-ஐ Billing / Purchase-இலிருந்து திறக்கவும்.');
+    window.opener.postMessage({type:'MARUTHY_BARCODE_SCANNED', barcode:barcode, target:target}, returnOrigin);
+    status('பார்கோடு அனுப்பப்பட்டது: ' + barcode + '. இந்த சாளரம் மூடப்படுகிறது…');
+    setTimeout(()=>window.close(),500);
+  }
+  async function stop(){
+    if(scanner){try{if(scanner.isScanning) await scanner.stop();}catch(e){}try{await scanner.clear();}catch(e){}scanner=null;}
+    busy=false;
+  }
+  async function start(){
+    if(busy) return;
+    if(typeof Html5Qrcode === 'undefined') return status('Scanner library ஏற்றப்படவில்லை. இணைய இணைப்பைச் சரிபார்க்கவும்.');
+    busy=true; status('கேமரா அனுமதி மற்றும் சாதனத்தைச் சரிபார்க்கிறது…');
+    try{
+      scanner = new Html5Qrcode('reader');
+      const cameras = await Html5Qrcode.getCameras();
+      if(!cameras || !cameras.length) throw new Error('கேமரா கண்டுபிடிக்கப்படவில்லை.');
+      const chosen = cameras.find(c=>/back|rear|environment/i.test(c.label)) || cameras[0];
+      await scanner.start(chosen.id,{fps:10,qrbox:{width:280,height:150},aspectRatio:1.777},decoded=>{if(!busy)return;busy=false;sendBarcode(decoded);stop();},()=>{});
+      status('கேமரா இயங்குகிறது. பார்கோடை கேமரா பெட்டிக்குள் காட்டவும். ('+(target==='purchase'?'Purchase':'Billing')+')');
+    }catch(e){busy=false;try{if(scanner){if(scanner.isScanning)await scanner.stop();await scanner.clear();}}catch(x){}scanner=null;status('கேமராவைத் திறக்க முடியவில்லை: '+(e.message||e)+' — Site settings-ல் Camera Allow என்பதைச் சரிபார்க்கவும்.');}
+  }
+  document.getElementById('startBtn').addEventListener('click',start);
+  document.getElementById('stopBtn').addEventListener('click',async()=>{await stop();status('கேமரா நிறுத்தப்பட்டது. மீண்டும் தொடங்கலாம்.');});
+  document.getElementById('closeBtn').addEventListener('click',async()=>{await stop();window.close();status('இந்த சாளரத்தை browser-ல் கைமுறையாக மூடலாம்.');});
+  document.getElementById('sendBtn').addEventListener('click',()=>sendBarcode(manual.value));
+  manual.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendBarcode(manual.value);}});
+  if(!window.isSecureContext) status('HTTPS தேவை. இந்தப் பக்கத்தை HTTPS hosting-ல் வெளியிடவும்.');
+  else status('கேமராவைத் தொடங்கு பொத்தானை அழுத்தவும். ('+(target==='purchase'?'Purchase':'Billing')+')');
+})();
+</script></body></html>
